@@ -216,17 +216,14 @@ void Duo75::start(irq_handler_t handler) {
         irq_add_shared_handler(DMA_IRQ_0, handler, PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
 
         dma_channel_set_irq0_enabled(dma_channel_a, true);
-        dma_channel_set_irq0_enabled(dma_channel_b, true);
 
         irq_set_enabled(DMA_IRQ_0, true);
 
-        row_a = 0;
-        bit_a = 0;
-        row_b = 0;
-        bit_b = 0;
+        row = 0;
+        bit = 0;
 
-        duo75_data_rgb888_set_shift(pio_a, sm_data_a, data_prog_offs_a, bit_a);
-        duo75_data_rgb888_set_shift(pio_b, sm_data_b, data_prog_offs_b, bit_b);
+        duo75_data_rgb888_set_shift(pio_a, sm_data_a, data_prog_offs_a, bit);
+        duo75_data_rgb888_set_shift(pio_b, sm_data_b, data_prog_offs_b, bit);
 
         dma_channel_set_trans_count(dma_channel_a, width * 2, false);
         dma_channel_set_trans_count(dma_channel_b, width * 2, false);
@@ -323,68 +320,48 @@ void Duo75::clear() {
 
 
 void Duo75::dma_complete() {
+    dma_channel_acknowledge_irq0(dma_channel_a);
 
-    if(dma_channel_get_irq0_status(dma_channel_a)) {
-        dma_channel_acknowledge_irq0(dma_channel_a);
+    // Push out a dummy pixel for each row
+    pio_sm_put_blocking(pio_a, sm_data_a, 0);
+    pio_sm_put_blocking(pio_a, sm_data_a, 0);
 
-        // Push out a dummy pixel for each row
-        pio_sm_put_blocking(pio_a, sm_data_a, 0);
-        pio_sm_put_blocking(pio_a, sm_data_a, 0);
+    dma_channel_wait_for_finish_blocking(dma_channel_b);
 
-        // SM is finished when it stalls on empty TX FIFO
-        duo75_wait_tx_stall(pio_a, sm_data_a);
+    // Push out a dummy pixel for each row
+    pio_sm_put_blocking(pio_b, sm_data_b, 0);
+    pio_sm_put_blocking(pio_b, sm_data_b, 0);
 
-        // Check that previous OEn pulse is finished, else things WILL get out of sequence
-        duo75_wait_tx_stall(pio_a, sm_row_a);
+    // SM is finished when it stalls on empty TX FIFO
+    duo75_wait_tx_stall(pio_a, sm_data_a);
+    duo75_wait_tx_stall(pio_b, sm_data_b);
 
-        // Latch row data, pulse output enable for new row.
-        pio_sm_put_blocking(pio_a, sm_row_a, row_a | (brightness << 5 << bit_a));
+    // Check that previous OEn pulse is finished, else things WILL get out of sequence
+    duo75_wait_tx_stall(pio_a, sm_row_a);
+    duo75_wait_tx_stall(pio_b, sm_row_b);
 
-        row_a++;
+    const uint row_and_brightness = row | (brightness << 5 << bit);
 
-        if(row_a == height / 4) {
-            row_a = 0;
-            bit_a++;
-            if (bit_a == BIT_DEPTH) {
-                bit_a = 0;
-            }
-            duo75_data_rgb888_set_shift(pio_a, sm_data_a, data_prog_offs_a, bit_a);
+    // Latch row data, pulse output enable for new row.
+    pio_sm_put_blocking(pio_a, sm_row_a, row_and_brightness);
+    pio_sm_put_blocking(pio_b, sm_row_b, row_and_brightness);
+
+    row++;
+
+    if(row == height / 4) {
+        row = 0;
+        bit++;
+        if (bit == BIT_DEPTH) {
+            bit = 0;
         }
-
-        dma_channel_set_trans_count(dma_channel_a, width * 2, false);
-        dma_channel_set_read_addr(dma_channel_a, &back_buffer[row_a * width * 2], true);
+        duo75_data_rgb888_set_shift(pio_a, sm_data_a, data_prog_offs_a, bit);
+        duo75_data_rgb888_set_shift(pio_b, sm_data_b, data_prog_offs_b, bit);
     }
 
-    if(dma_channel_get_irq0_status(dma_channel_b)) {
-        dma_channel_acknowledge_irq0(dma_channel_b);
-
-        // Push out a dummy pixel for each row
-        pio_sm_put_blocking(pio_b, sm_data_b, 0);
-        pio_sm_put_blocking(pio_b, sm_data_b, 0);
-
-        // SM is finished when it stalls on empty TX FIFO
-        duo75_wait_tx_stall(pio_b, sm_data_b);
-
-        // Check that previous OEn pulse is finished, else things WILL get out of sequence
-        duo75_wait_tx_stall(pio_b, sm_row_b);
-
-        // Latch row data, pulse output enable for new row.
-        pio_sm_put_blocking(pio_b, sm_row_b, row_b | (brightness << 5 << bit_b));
-
-        row_b++;
-
-        if(row_b == height / 4) {
-            row_b = 0;
-            bit_b++;
-            if (bit_b == BIT_DEPTH) {
-                bit_b = 0;
-            }
-            duo75_data_rgb888_set_shift(pio_b, sm_data_b, data_prog_offs_b, bit_b);
-        }
-
-        dma_channel_set_trans_count(dma_channel_b, width * 2, false);
-        dma_channel_set_read_addr(dma_channel_b, &back_buffer[(width * height / 2) + row_b * width * 2], true);
-    }
+    dma_channel_set_trans_count(dma_channel_a, width * 2, false);
+    dma_channel_set_read_addr(dma_channel_a, &back_buffer[row * width * 2], true);
+    dma_channel_set_trans_count(dma_channel_b, width * 2, false);
+    dma_channel_set_read_addr(dma_channel_b, &back_buffer[(row + height / 4) * width * 2], true);
 }
 
 void Duo75::copy_to_back_buffer(void *data, size_t len, int start_x, int start_y) {

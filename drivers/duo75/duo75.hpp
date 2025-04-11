@@ -76,8 +76,8 @@ class Duo75 {
         BRG,
         BGR
     };
-    const uint width = 128;
-    const uint height = 128;
+    static constexpr uint width = 128;
+    static constexpr uint height = 128;
     uint r_shift = 0;
     uint g_shift = 10;
     uint b_shift = 20;
@@ -92,10 +92,8 @@ class Duo75 {
     int dma_channel_a = -1;
     int dma_channel_b = -1;
 
-    uint bit_a = 0;
-    uint bit_b = 0;
-    uint row_a = 0;
-    uint row_b = 0;
+    uint bit = 0;
+    uint row = 0;
 
     PIO pio_a = pio0;
     PIO pio_b = pio1;
